@@ -49,8 +49,8 @@ A single engine detection can be a false positive, so one hit is treated as susp
 Tested on Ubuntu with Python 3.
 
 ```bash
-git clone https://github.com/25dominic/ioc-triage.git
-cd ioc-triage
+git clone https://github.com/25dominic/comp-triage.git
+cd comp-triage
 python3 -m venv venv
 source venv/bin/activate
 pip install requests python-dotenv
