@@ -235,7 +235,7 @@ def print_result(res: dict) -> None:
     elif "abuse_error" in res:
         print(f"  AbuseIPDB  : {GREY}{res['abuse_error']}{RESET}")
 
-        if res["verdict"] not in ("INTERNAL", "UNKNOWN"):
+    if res["verdict"] not in ("INTERNAL", "UNKNOWN"):
         print(f"  {GREY}VT link    : https://www.virustotal.com/gui/search/{res['indicator']}{RESET}")
 
 
