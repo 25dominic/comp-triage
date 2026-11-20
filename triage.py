@@ -30,6 +30,15 @@ ABUSE_KEY = os.getenv("ABUSEIPDB_API_KEY")
 
 VT_DELAY = 15  # VirusTotal free tier allows 4 requests per minute
 TIMEOUT = 20
+
+# ---------------------------------------------------------------------------
+# Tuning - change these numbers to make the tool stricter or looser
+# ---------------------------------------------------------------------------
+VT_MALICIOUS_MIN = 3      # this many VT engines flagging it = MALICIOUS
+ABUSE_MALICIOUS_MIN = 75  # AbuseIPDB score at or above this = MALICIOUS
+ABUSE_SUSPICIOUS_MIN = 25 # AbuseIPDB score at or above this = SUSPICIOUS
+FP_HARMLESS_MIN = 20      # a single VT hit is treated as a false positive
+                          # when at least this many engines say "harmless"
 _last_vt_call = 0.0
 
 # Terminal colors
@@ -165,24 +174,50 @@ def abuseipdb_lookup(ip: str) -> dict:
         "abuse_isp": d.get("isp", ""),
         "abuse_usage": d.get("usageType", ""),
         "abuse_last_reported": d.get("lastReportedAt", ""),
+        "abuse_whitelisted": bool(d.get("isWhitelisted")),
     }
 
 
 # ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------
-def verdict(res: dict) -> str:
+def verdict(res: dict) -> tuple:
+    """Return (verdict, reason). Rules are checked from most to least serious."""
     vt_mal = res.get("vt_malicious", 0) or 0
     vt_sus = res.get("vt_suspicious", 0) or 0
+    harmless = res.get("vt_harmless", 0) or 0
     abuse = res.get("abuse_score", 0) or 0
+    hits = vt_mal + vt_sus
 
-    if vt_mal >= 3 or abuse >= 75:
-        return "MALICIOUS"
-    if vt_mal >= 1 or vt_sus >= 1 or abuse >= 25:
-        return "SUSPICIOUS"
+    # Rule 1: strong evidence -> MALICIOUS
+    if vt_mal >= VT_MALICIOUS_MIN:
+        return "MALICIOUS", f"{vt_mal} VirusTotal engines flagged it as malicious"
+    if abuse >= ABUSE_MALICIOUS_MIN:
+        return "MALICIOUS", f"AbuseIPDB confidence score {abuse}/100"
+
+    # Rule 2: known legitimate services (e.g. Google DNS) -> CLEAN
+    if res.get("abuse_whitelisted") and abuse < ABUSE_SUSPICIOUS_MIN:
+        return "CLEAN", "whitelisted by AbuseIPDB as a known legitimate service"
+
+    # Rule 3: one lone detection outvoted by many harmless votes -> CLEAN
+    if hits == 1 and harmless >= FP_HARMLESS_MIN and abuse < ABUSE_SUSPICIOUS_MIN:
+        return "CLEAN", f"likely false positive: 1 engine flagged it, {harmless} rated it harmless"
+
+    # Rule 4: weak evidence -> SUSPICIOUS (an analyst should look)
+    if hits >= 1 or abuse >= ABUSE_SUSPICIOUS_MIN:
+        reasons = []
+        if hits:
+            reasons.append(f"{hits} VirusTotal engine(s) flagged it")
+        if abuse >= ABUSE_SUSPICIOUS_MIN:
+            reasons.append(f"AbuseIPDB score {abuse}/100")
+        return "SUSPICIOUS", "; ".join(reasons)
+
+    # Rule 5: results came back with nothing flagged -> CLEAN
     if "vt_malicious" in res or "abuse_score" in res:
-        return "CLEAN"
-    return "UNKNOWN"
+        return "CLEAN", "no detections"
+
+    # Rule 6: no data (e.g. a new file VirusTotal has never seen) -> UNKNOWN
+    return "UNKNOWN", res.get("vt_error") or res.get("abuse_error") or "no results"
 
 
 def triage(raw: str) -> dict:
@@ -203,7 +238,7 @@ def triage(raw: str) -> dict:
     res.update(vt_lookup(ioc, kind))
     if kind == "ip":
         res.update(abuseipdb_lookup(ioc))
-    res["verdict"] = verdict(res)
+    res["verdict"], res["reason"] = verdict(res)
     return res
 
 
@@ -217,6 +252,8 @@ def print_result(res: dict) -> None:
 
     if "note" in res:
         print(f"  {res['note']}")
+    if "reason" in res:
+        print(f"  Reason     : {res['reason']}")
     if "vt_malicious" in res:
         print(f"  VirusTotal : {res['vt_malicious']} malicious, {res['vt_suspicious']} suspicious, "
               f"{res['vt_harmless']} harmless, {res['vt_undetected']} undetected")

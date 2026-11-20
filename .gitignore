@@ -3,3 +3,5 @@ venv/
 reports/
 __pycache__/
 iocs.txt
+events.db
+events.db
